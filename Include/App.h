@@ -15,7 +15,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
-#include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan_raii.hpp>f,.
 #else
 import vulkan_hpp;
 #endif
@@ -68,6 +68,8 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
+        createImageViews();
+        createGraphicsPipeline();
     }
 
     void mainLoop()
@@ -305,6 +307,28 @@ private:
         return {std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
                 std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)};
     }
+
+    void createImageViews()
+    {
+        assert(swapChainImageViews.empty());
+
+        vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
+                                                    .format = swapChainSurfaceFormat.format,
+                                                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+
+        imageViewCreateInfo.components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                                          vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity};
+
+        imageViewCreateInfo.subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1};
+
+        for (auto &image : swapChainImages) {
+            imageViewCreateInfo.image = image;
+            swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+        }
+    }
+
+    void createGraphicsPipeline() {}
 
 private:
     GLFWwindow *window = nullptr;
