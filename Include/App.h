@@ -107,7 +107,6 @@ private:
                 return strcmp(layerProperty.layerName, requiredLayer) == 0;
             });
         });
-
         if (unsupportedLayerIt != requiredLayers.end()) {
             throw std::runtime_error("Required layer not supported: " + std::string(*unsupportedLayerIt));
         }
@@ -115,8 +114,7 @@ private:
         // Get the required extensions.
         auto requiredExtensions = getRequiredInstanceExtensions();
 
-        // Check if the required extensions are supported by the Vulkan
-        // implementation.
+        // Check if the required extensions are supported by the Vulkan implementation.
         auto extensionProperties = context.enumerateInstanceExtensionProperties();
         auto unsupportedPropertyIt =
             std::ranges::find_if(requiredExtensions, [&extensionProperties](auto const &requiredExtension) {
@@ -124,7 +122,6 @@ private:
                     return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
                 });
             });
-
         if (unsupportedPropertyIt != requiredExtensions.end()) {
             throw std::runtime_error("Required extension not supported: " + std::string(*unsupportedPropertyIt));
         }
@@ -148,9 +145,8 @@ private:
 
     bool isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice)
     {
-
         // Check if the physicalDevice supports the Vulkan 1.3 API version
-        bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
+        bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= VK_API_VERSION_1_3;
 
         // Check if any of the queue families support graphics operations
         auto queueFamilies = physicalDevice.getQueueFamilyProperties();
@@ -167,12 +163,13 @@ private:
                     });
             });
 
-        // Check if the physicalDevice supports the required features (dynamic
-        // rendering and extended dynamic state)
+        // Check if the physicalDevice supports the required features
         auto features =
-            physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
+            physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+                                                 vk::PhysicalDeviceVulkan13Features,
                                                  vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
         bool supportsRequiredFeatures =
+            features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
             features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
             features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
@@ -193,7 +190,6 @@ private:
 
     void createLogicalDevice()
     {
-        // find the index of the first queue family that supports graphics
         std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
         // get the first index into queueFamilyProperties which supports both graphics and present
@@ -209,20 +205,21 @@ private:
         if (queueIndex == ~0) {
             throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
         }
+
         // query for Vulkan 1.3 features
-        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
-                           vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+                           vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
             featureChain = {
-                {},                            // vk::PhysicalDeviceFeatures2
-                {.dynamicRendering = true},    // vk::PhysicalDeviceVulkan13Features
-                {.extendedDynamicState = true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+                {},                             // vk::PhysicalDeviceFeatures2
+                {.shaderDrawParameters = true}, // vk::PhysicalDeviceVulkan11Features
+                {.dynamicRendering = true},     // vk::PhysicalDeviceVulkan13Features
+                {.extendedDynamicState = true}  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
             };
 
         // create a Device
         float queuePriority = 0.5f;
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
             .queueFamilyIndex = queueIndex, .queueCount = 1, .pQueuePriorities = &queuePriority};
-
         vk::DeviceCreateInfo deviceCreateInfo{.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
                                               .queueCreateInfoCount = 1,
                                               .pQueueCreateInfos = &deviceQueueCreateInfo,
@@ -269,6 +266,9 @@ private:
         auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
         std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+        if (enableValidationLayers) {
+            extensions.push_back(vk::EXTDebugUtilsExtensionName);
+        }
 
         return extensions;
     }
@@ -284,6 +284,7 @@ private:
 
     vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const &availableFormats)
     {
+        assert(!availableFormats.empty());
         const auto formatIt = std::ranges::find_if(availableFormats, [](const auto &format) {
             return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
         });
@@ -316,13 +317,6 @@ private:
         vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
                                                     .format = swapChainSurfaceFormat.format,
                                                     .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-
-        imageViewCreateInfo.components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
-                                          vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity};
-
-        imageViewCreateInfo.subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1};
-
         for (auto &image : swapChainImages) {
             imageViewCreateInfo.image = image;
             swapChainImageViews.emplace_back(device, imageViewCreateInfo);
@@ -369,25 +363,23 @@ private:
         vk::PipelineDynamicStateCreateInfo dynamicState{
             .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
 
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 0, .pushConstantRangeCount = 0};
 
         pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
-        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{.colorAttachmentCount = 1,
-                                                                    .pColorAttachmentFormats = &swapChainImageFormat};
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo{.pNext = &pipelineRenderingCreateInfo,
-                                                    .stageCount = 2,
-                                                    .pStages = shaderStages,
-                                                    .pVertexInputState = &vertexInputInfo,
-                                                    .pInputAssemblyState = &inputAssembly,
-                                                    .pViewportState = &viewportState,
-                                                    .pRasterizationState = &rasterizer,
-                                                    .pMultisampleState = &multisampling,
-                                                    .pColorBlendState = &colorBlending,
-                                                    .pDynamicState = &dynamicState,
-                                                    .layout = pipelineLayout,
-                                                    .renderPass = nullptr};
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {.stageCount = 2,
+             .pStages = shaderStages,
+             .pVertexInputState = &vertexInputInfo,
+             .pInputAssemblyState = &inputAssembly,
+             .pViewportState = &viewportState,
+             .pRasterizationState = &rasterizer,
+             .pMultisampleState = &multisampling,
+             .pColorBlendState = &colorBlending,
+             .pDynamicState = &dynamicState,
+             .layout = pipelineLayout,
+             .renderPass = nullptr},
+            {.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChainSurfaceFormat.format}};
 
         graphicsPipeline =
             vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
@@ -406,7 +398,7 @@ private:
     {
         std::ifstream file(filename, std::ios::ate | std::ios::binary);
         if (!file.is_open()) {
-            throw std::runtime_error("failed to open file!");
+            throw std::runtime_error("failed to open Shader file!");
         }
         std::vector<char> buffer(file.tellg());
         file.seekg(0, std::ios::beg);
@@ -421,9 +413,12 @@ private:
     vk::raii::Context context;
     vk::raii::Instance instance = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
+
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
+
     vk::raii::Queue queue = nullptr;
+
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages;
     vk::SurfaceFormatKHR swapChainSurfaceFormat;
@@ -431,6 +426,7 @@ private:
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
     vk::raii::PipelineLayout pipelineLayout = nullptr;
+    vk::raii::Pipeline graphicsPipeline = nullptr;
 
     std::vector<const char *> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
 };
