@@ -40,3 +40,5 @@ add_slang_shader_target(${SHADER_SLANG_TARGET}
 )
 
 add_dependencies(${PROJECT_NAME} ${SHADER_SLANG_TARGET})
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE SHADERS_DIR="${CMAKE_CURRENT_LIST_DIR}/Shaders")

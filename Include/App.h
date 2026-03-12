@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -15,7 +16,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
-#include <vulkan/vulkan_raii.hpp>f,.
+#include <vulkan/vulkan_raii.hpp>
 #else
 import vulkan_hpp;
 #endif
@@ -328,7 +329,91 @@ private:
         }
     }
 
-    void createGraphicsPipeline() {}
+    void createGraphicsPipeline()
+    {
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(SHADERS_DIR "/slang.spv"));
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
+            .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
+            .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
+        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::PrimitiveTopology::eTriangleList};
+        vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
+                                                            .rasterizerDiscardEnable = vk::False,
+                                                            .polygonMode = vk::PolygonMode::eFill,
+                                                            .cullMode = vk::CullModeFlagBits::eBack,
+                                                            .frontFace = vk::FrontFace::eClockwise,
+                                                            .depthBiasEnable = vk::False,
+                                                            .depthBiasSlopeFactor = 1.0f,
+                                                            .lineWidth = 1.0f};
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = vk::SampleCountFlagBits::e1,
+                                                             .sampleShadingEnable = vk::False};
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+
+        vk::PipelineColorBlendStateCreateInfo colorBlending{.logicOpEnable = vk::False,
+                                                            .logicOp = vk::LogicOp::eCopy,
+                                                            .attachmentCount = 1,
+                                                            .pAttachments = &colorBlendAttachment};
+
+        std::vector dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        vk::PipelineDynamicStateCreateInfo dynamicState{
+            .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+
+        pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{.colorAttachmentCount = 1,
+                                                                    .pColorAttachmentFormats = &swapChainImageFormat};
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{.pNext = &pipelineRenderingCreateInfo,
+                                                    .stageCount = 2,
+                                                    .pStages = shaderStages,
+                                                    .pVertexInputState = &vertexInputInfo,
+                                                    .pInputAssemblyState = &inputAssembly,
+                                                    .pViewportState = &viewportState,
+                                                    .pRasterizationState = &rasterizer,
+                                                    .pMultisampleState = &multisampling,
+                                                    .pColorBlendState = &colorBlending,
+                                                    .pDynamicState = &dynamicState,
+                                                    .layout = pipelineLayout,
+                                                    .renderPass = nullptr};
+
+        graphicsPipeline =
+            vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+    }
+
+    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
+    {
+        vk::ShaderModuleCreateInfo createInfo{.codeSize = code.size() * sizeof(char),
+                                              .pCode = reinterpret_cast<const uint32_t *>(code.data())};
+        vk::raii::ShaderModule shaderModule{device, createInfo};
+
+        return shaderModule;
+    }
+
+    static std::vector<char> readFile(const std::string &filename)
+    {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("failed to open file!");
+        }
+        std::vector<char> buffer(file.tellg());
+        file.seekg(0, std::ios::beg);
+        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        file.close();
+        return buffer;
+    }
 
 private:
     GLFWwindow *window = nullptr;
@@ -344,6 +429,8 @@ private:
     vk::SurfaceFormatKHR swapChainSurfaceFormat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::raii::ImageView> swapChainImageViews;
+
+    vk::raii::PipelineLayout pipelineLayout = nullptr;
 
     std::vector<const char *> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
 };
